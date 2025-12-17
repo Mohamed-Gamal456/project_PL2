@@ -1,0 +1,438 @@
+import javax.swing.*;
+import javax.swing.table.DefaultTableModel;
+import java.awt.*;
+import java.time.LocalDate;
+import java.util.Optional;
+
+public class EMSGUI {
+
+    private static JFrame frame;
+    private static EMSApp.User currentUser;
+
+    public static void launchGUI() {
+        SwingUtilities.invokeLater(() -> {
+            frame = new JFrame("Event Management System");
+            frame.setSize(1000,600);
+            frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+            frame.setLocationRelativeTo(null);
+            showLogin();
+            frame.setVisible(true);
+        });
+    }
+
+    private static void showLogin() {
+        JPanel p = new JPanel(new GridLayout(3,2,8,8));
+        JTextField email = new JTextField();
+        JPasswordField pass = new JPasswordField();
+        p.add(new JLabel("Email:")); p.add(email);
+        p.add(new JLabel("Password:")); p.add(pass);
+
+        JButton login = new JButton("Login");
+        JButton register = new JButton("Create Customer Account");
+        p.add(login); p.add(register);
+
+        frame.setContentPane(new JPanel(new BorderLayout()){{
+            add(new JLabel("Login", SwingConstants.CENTER), BorderLayout.NORTH);
+            add(p, BorderLayout.CENTER);
+        }});
+        frame.revalidate();
+
+        login.addActionListener(e -> {
+            String em=email.getText().trim();
+            String pw=new String(pass.getPassword());
+            Optional<EMSApp.User> u = EMSApp.DataStore.findByEmail(em);
+            if(u.isPresent() && u.get().password.equals(pw)){
+                currentUser=u.get();
+                JOptionPane.showMessageDialog(frame,"Welcome "+currentUser.name);
+                routeByRole();
+            } else JOptionPane.showMessageDialog(frame,"Invalid credentials");
+        });
+
+        register.addActionListener(e -> showRegistration());
+    }
+
+    private static void showRegistration() {
+        JPanel p = new JPanel(new GridLayout(5,2,6,6));
+        JTextField name = new JTextField();
+        JTextField email = new JTextField();
+        JPasswordField pw = new JPasswordField();
+        JPasswordField pw2 = new JPasswordField();
+        p.add(new JLabel("Full name:")); p.add(name);
+        p.add(new JLabel("Email:")); p.add(email);
+        p.add(new JLabel("Password:")); p.add(pw);
+        p.add(new JLabel("Confirm Password:")); p.add(pw2);
+
+        JButton create = new JButton("Create Customer");
+        JButton back = new JButton("Back");
+        p.add(create); p.add(back);
+
+        frame.setContentPane(new JPanel(new BorderLayout()){{
+            add(new JLabel("Register Customer", SwingConstants.CENTER), BorderLayout.NORTH);
+            add(p, BorderLayout.CENTER);
+        }});
+        frame.revalidate();
+
+        back.addActionListener(a -> showLogin());
+        create.addActionListener(a -> {
+            String n=name.getText().trim();
+            String em=email.getText().trim();
+            String p1=new String(pw.getPassword());
+            String p2=new String(pw2.getPassword());
+            if(n.isEmpty()||em.isEmpty()||p1.isEmpty()){ JOptionPane.showMessageDialog(frame,"Fill all fields"); return; }
+            if(!p1.equals(p2)){ JOptionPane.showMessageDialog(frame,"Passwords do not match"); return; }
+            if(EMSApp.DataStore.findByEmail(em).isPresent()){ JOptionPane.showMessageDialog(frame,"Email used"); return; }
+            String id = EMSApp.genId("C");
+            EMSApp.User u = new EMSApp.User(id,n,em,p1,"CUSTOMER");
+            EMSApp.DataStore.users.add(u);
+            EMSApp.DataStore.saveAll();
+            EMSApp.DataStore.sendEmail(em,"Welcome","Account created. Email: "+em+" Password: "+p1);
+            showLogin();
+        });
+    }
+
+    private static void routeByRole() {
+        switch(currentUser.role){
+            case "ADMIN": showAdminPanel(); break;
+            case "PM": showPMPanel(); break;
+            case "SP": showSPPanel(); break;
+            default: showCustomerPanel(); break;
+        }
+    }
+
+    // ------------------ Customer Dashboard ------------------
+    private static void showCustomerPanel() {
+        JPanel top = new JPanel(new BorderLayout());
+        top.add(new JLabel("Customer Dashboard - "+currentUser.name), BorderLayout.CENTER);
+
+        String[] cols={"Reservation","Event","Date","Status","Price"};
+        DefaultTableModel model = new DefaultTableModel(cols,0){ public boolean isCellEditable(int r,int c){return false;} };
+        JTable table = new JTable(model);
+        refreshCustomerTable(model);
+
+        JButton book=new JButton("Book Event");
+        JButton manage=new JButton("Manage Booking");
+        JButton contact=new JButton("Contact PM");
+        JButton logout=new JButton("Logout");
+        JPanel ctrl=new JPanel(); ctrl.add(book); ctrl.add(manage); ctrl.add(contact); ctrl.add(logout);
+
+        frame.setContentPane(new JPanel(new BorderLayout()){{
+            add(top, BorderLayout.NORTH);
+            add(new JScrollPane(table), BorderLayout.CENTER);
+            add(ctrl, BorderLayout.SOUTH);
+        }});
+        frame.revalidate();
+
+        logout.addActionListener(a -> { currentUser=null; EMSApp.DataStore.saveAll(); showLogin(); });
+        book.addActionListener(a -> showBookingForm());
+        manage.addActionListener(a -> {
+            int r=table.getSelectedRow();
+            if(r==-1){ JOptionPane.showMessageDialog(frame,"Select booking"); return; }
+            showManageBooking((String)model.getValueAt(r,0));
+        });
+        contact.addActionListener(a -> showContactForm(null));
+    }
+
+    private static void refreshCustomerTable(DefaultTableModel model){
+        model.setRowCount(0);
+        for(EMSApp.Booking b: EMSApp.DataStore.bookings){
+            if(b.customerId.equals(currentUser.id))
+                model.addRow(new Object[]{b.reservation,b.eventName,b.date,b.status,b.price});
+        }
+    }
+
+    private static void showBookingForm(){
+        JPanel p=new JPanel(new GridLayout(4,2,6,6));
+        JTextField event=new JTextField();
+        JTextField dateField=new JTextField("YYYY-MM-DD");
+        JTextArea details=new JTextArea(4,20);
+        JButton submit=new JButton("Submit Booking");
+        JButton back=new JButton("Back");
+
+        p.add(new JLabel("Event Name:")); p.add(event);
+        p.add(new JLabel("Date:")); p.add(dateField);
+        p.add(new JLabel("Details:")); p.add(new JScrollPane(details));
+        p.add(submit); p.add(back);
+
+        frame.setContentPane(new JPanel(new BorderLayout()){{
+            add(new JLabel("Book Event",SwingConstants.CENTER),BorderLayout.NORTH);
+            add(p,BorderLayout.CENTER);
+        }});
+        frame.revalidate();
+
+        back.addActionListener(a-> showCustomerPanel());
+        submit.addActionListener(a-> {
+            try{
+                LocalDate d = LocalDate.parse(dateField.getText().trim());
+                String res = EMSApp.genId("R");
+                EMSApp.Booking b = new EMSApp.Booking(res,currentUser.id,event.getText().trim(),details.getText().trim(),d);
+                EMSApp.DataStore.bookings.add(b);
+                EMSApp.DataStore.saveAll();
+                EMSApp.DataStore.sendEmail(currentUser.email,"Reservation "+res,"Booking created: "+res);
+                JOptionPane.showMessageDialog(frame,"Booking created: "+res);
+                showCustomerPanel();
+            }catch(Exception ex){ JOptionPane.showMessageDialog(frame,"Invalid date/data"); }
+        });
+    }
+
+    private static void showManageBooking(String reservation){
+        Optional<EMSApp.Booking> ob = EMSApp.DataStore.findBooking(reservation);
+        if(!ob.isPresent()){ JOptionPane.showMessageDialog(frame,"Booking not found"); return; }
+        EMSApp.Booking b=ob.get();
+
+        JPanel info=new JPanel(new GridLayout(6,2,6,6));
+        info.add(new JLabel("Reservation:")); info.add(new JLabel(b.reservation));
+        info.add(new JLabel("Event:")); info.add(new JLabel(b.eventName));
+        info.add(new JLabel("Date:")); info.add(new JLabel(b.date.toString()));
+        info.add(new JLabel("Details:")); info.add(new JLabel(b.details));
+        info.add(new JLabel("Status:")); info.add(new JLabel(b.status));
+        JButton cancel=new JButton("Cancel Booking"); JButton back=new JButton("Back");
+        info.add(cancel); info.add(back);
+
+        frame.setContentPane(new JPanel(new BorderLayout()){{
+            add(new JLabel("Manage Booking",SwingConstants.CENTER),BorderLayout.NORTH);
+            add(info,BorderLayout.CENTER);
+        }});
+        frame.revalidate();
+
+        back.addActionListener(a-> showCustomerPanel());
+        cancel.addActionListener(a-> {
+            int c = JOptionPane.showConfirmDialog(frame,"Confirm cancel?","Confirm",JOptionPane.YES_NO_OPTION);
+            if(c==JOptionPane.YES_OPTION){
+                b.status="CANCELLED";
+                EMSApp.DataStore.saveAll();
+                JOptionPane.showMessageDialog(frame,"Cancelled");
+                showCustomerPanel();
+            }
+        });
+    }
+
+    private static void showContactForm(String toUserId){
+        JPanel p=new JPanel(new GridLayout(4,2,6,6));
+        JTextField to=new JTextField();
+        if(toUserId!=null){ to.setText(toUserId); to.setEditable(false); }
+        JTextArea body=new JTextArea(6,30);
+        JButton send=new JButton("Send");
+        JButton back=new JButton("Back");
+        p.add(new JLabel("To (user id):")); p.add(to);
+        p.add(new JLabel("From:")); p.add(new JLabel(currentUser.id));
+        p.add(new JLabel("Message:")); p.add(new JScrollPane(body));
+        p.add(send); p.add(back);
+
+        frame.setContentPane(new JPanel(new BorderLayout()){{
+            add(new JLabel("Contact User",SwingConstants.CENTER),BorderLayout.NORTH);
+            add(p,BorderLayout.CENTER);
+        }});
+        frame.revalidate();
+
+        back.addActionListener(a-> routeByRole());
+        send.addActionListener(a-> {
+            String t=to.getText().trim();
+            if(t.isEmpty()){ JOptionPane.showMessageDialog(frame,"Enter recipient id"); return; }
+            if(!EMSApp.DataStore.findById(t).isPresent()){ JOptionPane.showMessageDialog(frame,"Recipient not found"); return; }
+            EMSApp.Message m=new EMSApp.Message(currentUser.id,t,body.getText());
+            EMSApp.DataStore.messages.add(m);
+            EMSApp.DataStore.saveAll();
+            JOptionPane.showMessageDialog(frame,"Message sent");
+            routeByRole();
+        });
+    }
+
+    // ------------------ PM Dashboard ------------------
+    private static void showPMPanel(){
+        JPanel top=new JPanel(new BorderLayout());
+        top.add(new JLabel("Project Manager Dashboard - "+currentUser.name),BorderLayout.CENTER);
+
+        String[] cols={"Reservation","Customer","Event","Date","Status","Price","Assigned SP"};
+        DefaultTableModel model=new DefaultTableModel(cols,0){ public boolean isCellEditable(int r,int c){return false;} };
+        JTable table=new JTable(model);
+        refreshPMTable(model);
+
+        JButton assign=new JButton("Assign/Send to SP");
+        JButton msgs=new JButton("View Messages");
+        JButton logout=new JButton("Logout");
+        JPanel ctrl=new JPanel(); ctrl.add(assign); ctrl.add(msgs); ctrl.add(logout);
+
+        frame.setContentPane(new JPanel(new BorderLayout()){{
+            add(top,BorderLayout.NORTH);
+            add(new JScrollPane(table),BorderLayout.CENTER);
+            add(ctrl,BorderLayout.SOUTH);
+        }});
+        frame.revalidate();
+
+        logout.addActionListener(a->{ currentUser=null; EMSApp.DataStore.saveAll(); showLogin(); });
+        assign.addActionListener(a->{
+            int r=table.getSelectedRow(); if(r==-1){ JOptionPane.showMessageDialog(frame,"Select booking"); return; }
+            String res=(String)model.getValueAt(r,0);
+            EMSApp.Booking b=EMSApp.DataStore.findBooking(res).orElse(null);
+            if(b==null) return;
+            String spId=JOptionPane.showInputDialog(frame,"Enter SP id:");
+            if(spId==null || spId.trim().isEmpty()) return;
+            Optional<EMSApp.User> sp=EMSApp.DataStore.findById(spId.trim());
+            if(!sp.isPresent() || !"SP".equals(sp.get().role)){ JOptionPane.showMessageDialog(frame,"SP not found"); return; }
+            b.assignedSP=spId.trim(); b.pmId=currentUser.id; b.status="SENT_TO_SP";
+            EMSApp.DataStore.saveAll(); refreshPMTable(model);
+            JOptionPane.showMessageDialog(frame,"Sent to SP "+spId);
+        });
+
+        msgs.addActionListener(a-> showMessages(currentUser.id));
+    }
+
+    private static void refreshPMTable(DefaultTableModel model){
+        model.setRowCount(0);
+        for(EMSApp.Booking b: EMSApp.DataStore.bookings){
+            String cname=EMSApp.DataStore.findById(b.customerId).map(u->u.name).orElse(b.customerId);
+            model.addRow(new Object[]{b.reservation,cname,b.eventName,b.date,b.status,b.price,b.assignedSP});
+        }
+    }
+
+    // ------------------ SP Dashboard ------------------
+    private static void showSPPanel(){
+        JPanel top=new JPanel(new BorderLayout());
+        top.add(new JLabel("Service Provider Dashboard - "+currentUser.name),BorderLayout.CENTER);
+
+        String[] cols={"Reservation","Customer","Event","Date","Status","Price","PM"};
+        DefaultTableModel model=new DefaultTableModel(cols,0){ public boolean isCellEditable(int r,int c){return false;} };
+        JTable table=new JTable(model);
+        refreshSPTable(model);
+
+        JButton quote=new JButton("Quote Price & Ready Date");
+        JButton msgs=new JButton("View Messages");
+        JButton logout=new JButton("Logout");
+        JPanel ctrl=new JPanel(); ctrl.add(quote); ctrl.add(msgs); ctrl.add(logout);
+
+        frame.setContentPane(new JPanel(new BorderLayout()){{
+            add(top,BorderLayout.NORTH);
+            add(new JScrollPane(table),BorderLayout.CENTER);
+            add(ctrl,BorderLayout.SOUTH);
+        }});
+        frame.revalidate();
+
+        logout.addActionListener(a->{ currentUser=null; EMSApp.DataStore.saveAll(); showLogin(); });
+        msgs.addActionListener(a-> showMessages(currentUser.id));
+        quote.addActionListener(a->{
+            int r=table.getSelectedRow(); if(r==-1){ JOptionPane.showMessageDialog(frame,"Select booking"); return; }
+            EMSApp.Booking b=EMSApp.DataStore.findBooking((String)table.getValueAt(r,0)).orElse(null);
+            if(b==null) return;
+            try{
+                double price=Double.parseDouble(JOptionPane.showInputDialog(frame,"Enter price:"));
+                b.price=price; b.status="PRICED";
+                String ready=JOptionPane.showInputDialog(frame,"Enter ready date (YYYY-MM-DD) or leave blank:");
+                if(ready!=null && !ready.trim().isEmpty()) b.details+="\n[ReadyDate:"+ready+"]";
+                EMSApp.DataStore.saveAll();
+                refreshSPTable(model);
+            }catch(Exception ex){ JOptionPane.showMessageDialog(frame,"Invalid number"); }
+        });
+    }
+
+    private static void refreshSPTable(DefaultTableModel model){
+        model.setRowCount(0);
+        for(EMSApp.Booking b: EMSApp.DataStore.bookings){
+            if(currentUser.id.equals(b.assignedSP)){
+                String cname=EMSApp.DataStore.findById(b.customerId).map(u->u.name).orElse(b.customerId);
+                model.addRow(new Object[]{b.reservation,cname,b.eventName,b.date,b.status,b.price,b.pmId});
+            }
+        }
+    }
+
+    // ------------------ Admin Dashboard ------------------
+    private static void showAdminPanel(){
+        JPanel top=new JPanel(new BorderLayout());
+        top.add(new JLabel("Admin Dashboard - "+currentUser.name),BorderLayout.CENTER);
+
+        String[] cols={"ID","Name","Email","Role"};
+        DefaultTableModel model=new DefaultTableModel(cols,0){ public boolean isCellEditable(int r,int c){return false;} };
+        JTable table=new JTable(model);
+        refreshAdminUsers(model);
+
+        JButton add=new JButton("Add/Update User");
+        JButton del=new JButton("Delete User");
+        JButton viewBookings=new JButton("View All Bookings");
+        JButton logout=new JButton("Logout");
+        JPanel ctrl=new JPanel(); ctrl.add(add); ctrl.add(del); ctrl.add(viewBookings); ctrl.add(logout);
+
+        frame.setContentPane(new JPanel(new BorderLayout()){{
+            add(top,BorderLayout.NORTH);
+            add(new JScrollPane(table),BorderLayout.CENTER);
+            add(ctrl,BorderLayout.SOUTH);
+        }});
+        frame.revalidate();
+
+        logout.addActionListener(a->{ currentUser=null; EMSApp.DataStore.saveAll(); showLogin(); });
+        add.addActionListener(a-> showUserForm(null));
+        del.addActionListener(a->{
+            int r=table.getSelectedRow(); if(r==-1){ JOptionPane.showMessageDialog(frame,"Select user"); return; }
+            EMSApp.DataStore.users.removeIf(u->u.id.equals(table.getValueAt(r,0)));
+            EMSApp.DataStore.saveAll(); refreshAdminUsers(model);
+        });
+        viewBookings.addActionListener(a-> showAllBookings());
+    }
+
+    private static void refreshAdminUsers(DefaultTableModel model){
+        model.setRowCount(0);
+        for(EMSApp.User u: EMSApp.DataStore.users)
+            model.addRow(new Object[]{u.id,u.name,u.email,u.role});
+    }
+
+    private static void showUserForm(String userId){
+        JPanel p=new JPanel(new GridLayout(6,2,6,6));
+        JTextField idF=new JTextField(); JTextField name=new JTextField(); JTextField email=new JTextField();
+        JPasswordField pass=new JPasswordField(); JComboBox<String> roleBox=new JComboBox<>(new String[]{"ADMIN","PM","SP","CUSTOMER"});
+        if(userId!=null){
+            EMSApp.User u=EMSApp.DataStore.findById(userId).orElse(null);
+            if(u!=null){ idF.setText(u.id); idF.setEditable(false); name.setText(u.name); email.setText(u.email); pass.setText(u.password); roleBox.setSelectedItem(u.role);}
+        } else { idF.setText(EMSApp.genId("U")); idF.setEditable(false);}
+        p.add(new JLabel("ID:")); p.add(idF); p.add(new JLabel("Name:")); p.add(name);
+        p.add(new JLabel("Email:")); p.add(email); p.add(new JLabel("Password:")); p.add(pass);
+        p.add(new JLabel("Role:")); p.add(roleBox);
+        JButton save=new JButton("Save"); JButton back=new JButton("Back"); p.add(save); p.add(back);
+
+        frame.setContentPane(new JPanel(new BorderLayout()){{
+            add(new JLabel("User Form",SwingConstants.CENTER),BorderLayout.NORTH); add(p,BorderLayout.CENTER);
+        }}); frame.revalidate();
+
+        back.addActionListener(a-> showAdminPanel());
+        save.addActionListener(a->{
+            String id=idF.getText(), n=name.getText(), em=email.getText(), pw=new String(pass.getPassword()), role=(String)roleBox.getSelectedItem();
+            if(n.isEmpty()||em.isEmpty()||pw.isEmpty()){ JOptionPane.showMessageDialog(frame,"Fill all fields"); return; }
+            EMSApp.User u=new EMSApp.User(id,n,em,pw,role);
+            EMSApp.DataStore.users.removeIf(us->us.id.equals(id));
+            EMSApp.DataStore.users.add(u); EMSApp.DataStore.saveAll(); JOptionPane.showMessageDialog(frame,"Saved"); showAdminPanel();
+        });
+    }
+
+    private static void showAllBookings(){
+        String[] cols={"Reservation","Customer","Event","Date","Status","Price","Assigned SP","PM"};
+        DefaultTableModel model=new DefaultTableModel(cols,0){ public boolean isCellEditable(int r,int c){return false;} };
+        JTable table=new JTable(model);
+        for(EMSApp.Booking b: EMSApp.DataStore.bookings){
+            String cname=EMSApp.DataStore.findById(b.customerId).map(u->u.name).orElse(b.customerId);
+            model.addRow(new Object[]{b.reservation,cname,b.eventName,b.date,b.status,b.price,b.assignedSP,b.pmId});
+        }
+        JButton back=new JButton("Back");
+        frame.setContentPane(new JPanel(new BorderLayout()){{
+            add(new JLabel("All Bookings",SwingConstants.CENTER),BorderLayout.NORTH);
+            add(new JScrollPane(table),BorderLayout.CENTER);
+            add(back,BorderLayout.SOUTH);
+        }}); frame.revalidate();
+        back.addActionListener(a-> showAdminPanel());
+    }
+
+    // ------------------ Messages ------------------
+    private static void showMessages(String userId){
+        String[] cols={"From","To","Message","Time"};
+        DefaultTableModel model=new DefaultTableModel(cols,0){ public boolean isCellEditable(int r,int c){return false;} };
+        JTable table=new JTable(model);
+        for(EMSApp.Message m: EMSApp.DataStore.messages){
+            if(m.fromId.equals(userId)||m.toId.equals(userId)){
+                model.addRow(new Object[]{m.fromId,m.toId,m.text,m.timestamp});
+            }
+        }
+        JButton back=new JButton("Back");
+        frame.setContentPane(new JPanel(new BorderLayout()){{
+            add(new JLabel("Messages",SwingConstants.CENTER),BorderLayout.NORTH);
+            add(new JScrollPane(table),BorderLayout.CENTER);
+            add(back,BorderLayout.SOUTH);
+        }}); frame.revalidate();
+        back.addActionListener(a-> routeByRole());
+    }
+}
